@@ -1,0 +1,1 @@
+080252688953.dkr.ecr.ap-southeast-2.amazonaws.com/medical-chatbot

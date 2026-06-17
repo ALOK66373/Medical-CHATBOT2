@@ -1,0 +1,11 @@
+# Virtual environment
+medibot/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Jupyter notebooks checkpoint
+
+chroma_db/
+.env
