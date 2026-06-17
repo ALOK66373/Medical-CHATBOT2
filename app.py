@@ -28,10 +28,51 @@ app.secret_key = os.environ.get(
 logging.basicConfig(level=logging.INFO)
 
 # Environment variables for Gemini
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+if API_KEY:
+    os.environ["GOOGLE_API_KEY"] = API_KEY
+    os.environ["GEMINI_API_KEY"] = API_KEY
 
 chat_histories = {}
+
+
+def get_api_error_message(exc: Exception) -> str:
+    message = str(exc).lower()
+
+    if any(
+        term in message
+        for term in (
+            "quota",
+            "resource_exhausted",
+            "429",
+            "rate limit",
+            "exceeded your current quota",
+        )
+    ):
+        return (
+            "The chatbot could not respond because the Gemini API quota has been "
+            "exceeded. Please wait a bit or use a billing-enabled API key."
+        )
+
+    if any(
+        term in message
+        for term in (
+            "api key",
+            "authentication",
+            "unauthorized",
+            "invalid key",
+            "permission denied",
+        )
+    ):
+        return (
+            "The chatbot could not respond because the API key is missing or "
+            "invalid. Please check the environment configuration."
+        )
+
+    return (
+        "Sorry, the chatbot could not respond right now. Please try again in a "
+        "few minutes."
+    )
 
 # ------------------- NEW: lazy + cached setup -------------------
 
@@ -220,10 +261,7 @@ def chat():
         return str(response.get("answer", "I couldn't generate a response right now."))
     except Exception as e:
         logging.exception("Chat request failed")
-        return (
-            "Sorry, the chatbot could not respond right now. "
-            f"Details: {e}"
-        )
+        return get_api_error_message(e)
 
 
 if __name__ == '__main__':
