@@ -1,0 +1,17 @@
+.git
+.github
+.vscode
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.ipynb
+research
+chroma_db
+*.env
+.env*
+README.md
+setup.py
+template.sh
