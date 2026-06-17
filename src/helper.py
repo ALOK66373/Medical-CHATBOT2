@@ -3,13 +3,14 @@
 
 
 
+from functools import lru_cache
 from typing import List
 from pathlib import Path
 from langchain.schema import Document
 from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-
+# ------------------- NEW: cached embedding loader -------------------
 
 
 def resolve_data_dir(data="data"):
@@ -83,6 +84,8 @@ def text_split_documents(documents, chunk_size=500, chunk_overlap=20):
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
+
+@lru_cache(maxsize=1)
 def download_embeddings():
     model_name = "sentence-transformers/all-MiniLM-L6-v2"
     embeddings = HuggingFaceEmbeddings(model_name=model_name)
@@ -92,4 +95,5 @@ def download_embeddings():
 def download_hugging_face_embeddings():
     return download_embeddings()
 
-embedding = download_embeddings()
+# ------------------- OLD eager embedding setup (kept for reference) -------------------
+# embedding = download_embeddings()

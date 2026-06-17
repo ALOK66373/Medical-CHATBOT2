@@ -1,3 +1,4 @@
+from functools import lru_cache
 from flask import Flask, render_template, request, session
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -30,65 +31,81 @@ logging.basicConfig(level=logging.INFO)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
+chat_histories = {}
 
-embeddings = download_hugging_face_embeddings()
+# ------------------- NEW: lazy + cached setup -------------------
 
-persist_directory = os.path.abspath("./chroma_db")
-
-extracted_data = load_pdf_files("data")
-minimal_docs = filter_to_minimal_docs(extracted_data)
-text_split_docs = text_split_documents(minimal_docs)
+@lru_cache(maxsize=1)
+def get_embeddings():
+    return download_hugging_face_embeddings()
 
 
-def build_docsearch():
+@lru_cache(maxsize=1)
+def get_docsearch():
+    persist_directory = os.path.abspath("./chroma_db")
+    embeddings = get_embeddings()
+
+    if os.path.isdir(persist_directory) and os.listdir(persist_directory):
+        try:
+            return Chroma(
+                persist_directory=persist_directory,
+                embedding_function=embeddings,
+            )
+        except Exception:
+            pass
+
     if os.path.exists(persist_directory):
         shutil.rmtree(persist_directory, ignore_errors=True)
 
-    try:
-        return Chroma.from_documents(
-            documents=text_split_docs,
-            embedding=embeddings,
-            persist_directory=persist_directory,
-        )
-    except Exception as e:
-        message = str(e).lower()
-        if "hnsw" not in message and "compaction" not in message and "internalerror" not in message:
-            raise
+    extracted_data = load_pdf_files("data")
+    minimal_docs = filter_to_minimal_docs(extracted_data)
+    text_split_docs = text_split_documents(minimal_docs)
 
-        if os.path.exists(persist_directory):
-            shutil.rmtree(persist_directory, ignore_errors=True)
-
-        return Chroma.from_documents(
-            documents=text_split_docs,
-            embedding=embeddings,
-            persist_directory=persist_directory,
-        )
+    return Chroma.from_documents(
+        documents=text_split_docs,
+        embedding=embeddings,
+        persist_directory=persist_directory,
+    )
 
 
-docsearch = build_docsearch()
+@lru_cache(maxsize=1)
+def get_retriever():
+    docsearch = get_docsearch()
+    return docsearch.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 3},
+    )
 
-retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k":3})
+
+@lru_cache(maxsize=1)
+def get_llm():
+    return ChatGoogleGenerativeAI(
+        model="gemini-3.5-flash",
+        temperature=0.3,
+        top_p=0.95,
+        top_k=40,
+    )
 
 
+@lru_cache(maxsize=1)
+def get_prompt():
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}"),
+        ]
+    )
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
-    temperature=0.3,
-    top_p=0.95,
-    top_k=40,
-)
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-    ]
-)
 
-question_answer_chain = create_stuff_documents_chain(llm, prompt)
-rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+@lru_cache(maxsize=1)
+def get_question_answer_chain():
+    return create_stuff_documents_chain(get_llm(), get_prompt())
 
-chat_histories = {}
+
+@lru_cache(maxsize=1)
+def get_rag_chain():
+    return create_retrieval_chain(get_retriever(), get_question_answer_chain())
 
 
 def get_session_history(session_id: str):
@@ -97,12 +114,87 @@ def get_session_history(session_id: str):
     return chat_histories[session_id]
 
 
-conversational_rag_chain = RunnableWithMessageHistory(
-    rag_chain,
-    get_session_history,
-    input_messages_key="input",
-    history_messages_key="chat_history",
-)
+def get_conversational_rag_chain():
+    return RunnableWithMessageHistory(
+        get_rag_chain(),
+        get_session_history,
+        input_messages_key="input",
+        history_messages_key="chat_history",
+    )
+
+# ------------------- OLD eager setup (kept for reference) -------------------
+# embeddings = download_hugging_face_embeddings()
+#
+# persist_directory = os.path.abspath("./chroma_db")
+#
+# extracted_data = load_pdf_files("data")
+# minimal_docs = filter_to_minimal_docs(extracted_data)
+# text_split_docs = text_split_documents(minimal_docs)
+#
+#
+# def build_docsearch():
+#     if os.path.exists(persist_directory):
+#         shutil.rmtree(persist_directory, ignore_errors=True)
+#
+#     try:
+#         return Chroma.from_documents(
+#             documents=text_split_docs,
+#             embedding=embeddings,
+#             persist_directory=persist_directory,
+#         )
+#     except Exception as e:
+#         message = str(e).lower()
+#         if "hnsw" not in message and "compaction" not in message and "internalerror" not in message:
+#             raise
+#
+#         if os.path.exists(persist_directory):
+#             shutil.rmtree(persist_directory, ignore_errors=True)
+#
+#         return Chroma.from_documents(
+#             documents=text_split_docs,
+#             embedding=embeddings,
+#             persist_directory=persist_directory,
+#         )
+#
+#
+# docsearch = build_docsearch()
+#
+# retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k":3})
+#
+#
+#
+# llm = ChatGoogleGenerativeAI(
+#     model="gemini-3.5-flash",
+#     temperature=0.3,
+#     top_p=0.95,
+#     top_k=40,
+# )
+# prompt = ChatPromptTemplate.from_messages(
+#     [
+#         ("system", system_prompt),
+#         MessagesPlaceholder(variable_name="chat_history"),
+#         ("human", "{input}"),
+#     ]
+# )
+#
+# question_answer_chain = create_stuff_documents_chain(llm, prompt)
+# rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+#
+# chat_histories = {}
+#
+#
+# def get_session_history(session_id: str):
+#     if session_id not in chat_histories:
+#         chat_histories[session_id] = InMemoryChatMessageHistory()
+#     return chat_histories[session_id]
+#
+#
+# conversational_rag_chain = RunnableWithMessageHistory(
+#     rag_chain,
+#     get_session_history,
+#     input_messages_key="input",
+#     history_messages_key="chat_history",
+# )
 
 
 @app.route("/")
@@ -120,6 +212,7 @@ def chat():
         session["session_id"] = str(uuid.uuid4())
 
     try:
+        conversational_rag_chain = get_conversational_rag_chain()
         response = conversational_rag_chain.invoke(
             {"input": msg},
             config={"configurable": {"session_id": session["session_id"]}},
